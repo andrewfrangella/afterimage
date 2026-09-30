@@ -71,6 +71,9 @@ int main(int argc, char **argv) {
     }
   }
   {
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       temporary.path() + "/settings");
     Window w;
     w.show();
     QElapsedTimer t;
@@ -93,6 +96,24 @@ int main(int argc, char **argv) {
       if (b->currentText() == "Temporal anaglyph")
         anaglyph = true;
     verify(anaglyph, "preset drives mode");
+    w.setHistoryLimits(30000, 512);
+    auto delayControl = w.findChild<QDoubleSpinBox *>("delayControl");
+    auto delayUnits = w.findChild<QComboBox *>("delayUnits");
+    verify(delayControl && delayUnits, "delay settings controls");
+    verify(delayControl->maximum() == 30000, "maximum updates delay knob");
+    delayControl->setValue(15000);
+    delayUnits->setCurrentIndex(1);
+    verify(std::abs(delayControl->value() - 450) < .1,
+           "units preserve delay time");
+    verify(std::abs(delayControl->maximum() - 900) < .1,
+           "frame range follows maximum");
+    w.setHistoryLimits(1000, 256, false);
+    verify(delayControl->value() <= 30, "lowering max clamps current delay");
+    QSettings settings("Afterimage", "Afterimage");
+    verify(settings.value("history/maximumDelayMs").toDouble() == 30000,
+           "maximum persisted");
+    verify(settings.value("history/budgetMiB").toInt() == 512,
+           "budget persisted");
   }
   std::cout
       << "Independent worker integration passed: file decode, paused recording "

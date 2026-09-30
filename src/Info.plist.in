@@ -18,6 +18,10 @@
 <string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
 <key>NSCameraUsageDescription</key>
 <string>Afterimage uses your camera as a live source for temporal video effects.</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>Afterimage uses audio input to modulate visual effects.</string>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Afterimage receives OSC and sensor messages from devices on your local network.</string>
 <key>NSHighResolutionCapable</key>
 <true/>
 </dict>

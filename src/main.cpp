@@ -1,5 +1,10 @@
 #include "engine.hpp"
+#include "gpu_engine.hpp"
+#include "modulation.hpp"
+#include "syphon_output.hpp"
 #include <QElapsedTimer>
+#include <QOffscreenSurface>
+#include <QSurfaceFormat>
 #include <QtWidgets>
 #include <atomic>
 #include <cmath>
@@ -15,13 +20,23 @@ public:
   Params params;
   QString request = "demo", recordRequest;
   bool sourcePending = true, recordPending = false, paused = false, loop = true,
-       clear = false, recordingActive = false;
+       clear = false, recordingActive = false, preferGpu = true,
+       syphonEnabled = false, gpuActive = false;
   QImage output;
   QString status = "Ready";
   double fps = 30, available = 0;
   std::atomic<bool> quit{false};
   std::thread thread;
+  QOffscreenSurface surface;
   VideoWorker() {
+    QSurfaceFormat format;
+    format.setVersion(3, 3);
+#ifdef __APPLE__
+    format.setVersion(4, 1);
+#endif
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    surface.setFormat(format);
+    surface.create();
     thread = std::thread([this] { run(); });
   }
   ~VideoWorker() {
@@ -33,6 +48,11 @@ public:
     cv::VideoCapture cap;
     cv::VideoWriter writer;
     Engine engine;
+    GpuEngine gpu;
+    bool gpuReady = gpu.initialize(&surface), previousGpu = false;
+    SyphonOutput syphon;
+    QString backend = gpuReady ? gpu.renderer()
+                               : "CPU (GPU unavailable: " + gpu.error() + ")";
     QString source = "demo", pendingRecording;
     double rate = 30, time = 0;
     int index = 0;
@@ -43,10 +63,13 @@ public:
       Params p;
       QString req, rec;
       bool change = false, record = false, stop = false, repeat = true,
-           reset = false;
+           reset = false, useGpu = false, publishSyphon = false;
       {
         std::lock_guard<std::mutex> l(mutex);
         p = params;
+        useGpu = preferGpu && gpuReady;
+        publishSyphon = syphonEnabled;
+        gpuActive = useGpu;
         stop = paused;
         repeat = loop;
         reset = clear;
@@ -62,6 +85,16 @@ public:
           recordPending = false;
         }
       }
+      if (useGpu != previousGpu) {
+        engine.reset();
+        gpu.reset();
+        previousGpu = useGpu;
+      }
+      if (!publishSyphon || !useGpu) {
+        if (gpuReady)
+          gpu.makeCurrent();
+        syphon.stop();
+      }
       if (change) {
         {
           std::lock_guard<std::mutex> l(mutex);
@@ -72,6 +105,7 @@ public:
         cap.release();
         source = req;
         engine.reset();
+        gpu.reset();
         time = 0;
         index = 0;
         rate = 30;
@@ -97,8 +131,10 @@ public:
           fps = rate;
         }
       }
-      if (reset)
+      if (reset) {
         engine.reset();
+        gpu.reset();
+      }
       if (record) {
         writer.release();
         pendingRecording = rec;
@@ -126,6 +162,7 @@ public:
           if (!source.startsWith("camera:") && repeat) {
             cap.set(cv::CAP_PROP_POS_FRAMES, 0);
             engine.reset();
+            gpu.reset();
             time = 0;
             if (!cap.read(frame)) {
               source = "none";
@@ -148,7 +185,18 @@ public:
         }
         double stamp =
             source.startsWith("camera:") ? double(clock.elapsed()) : time;
-        auto processed = engine.process(frame, stamp, p);
+        auto processed = useGpu ? gpu.process(frame, stamp, p)
+                                : engine.process(frame, stamp, p);
+        QString syphonStatus;
+        if (publishSyphon && useGpu) {
+          gpu.makeCurrent();
+          if (syphon.start()) {
+            syphon.publish(gpu.outputTexture(), processed.cols, processed.rows);
+            syphonStatus = "  •  Syphon: Afterimage";
+          } else
+            syphonStatus = "  •  Syphon could not start";
+        } else if (publishSyphon)
+          syphonStatus = "  •  Syphon requires GPU";
         time += 1000. / rate;
         if (!pendingRecording.isEmpty()) {
           writer.open(pendingRecording.toStdString(),
@@ -168,14 +216,18 @@ public:
         {
           std::lock_guard<std::mutex> l(mutex);
           output = image.copy();
-          available = engine.availableMs();
+          available = useGpu ? gpu.availableMs() : engine.availableMs();
           status = QString("%1  •  %2 × %3  •  %4 fps  •  history %5 ms%6")
                        .arg(source)
                        .arg(frame.cols)
                        .arg(frame.rows)
                        .arg(rate, 0, 'f', 1)
                        .arg(available, 0, 'f', 0)
-                       .arg(writer.isOpened() ? "  •  REC" : "");
+                       .arg(writer.isOpened() ? "  •  REC" : "") +
+                   "  •  " +
+                   (useGpu ? "GPU: " + backend
+                           : (gpuReady ? "CPU reference" : backend)) +
+                   syphonStatus;
         }
       } catch (const std::exception &e) {
         writer.release();
@@ -193,7 +245,12 @@ class Window : public QMainWindow {
   QLabel *preview, *status, *delayInfo;
   QDoubleSpinBox *delay, *trails, *gain, *mix;
   QSpinBox *soft, *strobe, *camera;
-  QComboBox *mode, *units;
+  QComboBox *mode, *units, *backendSelect;
+  QSlider *delaySlider;
+  double maxDelayMs = 10000;
+  int historyBudgetMiB = 256, previousUnits = 0;
+  ModulationPanel *modulation;
+  QCheckBox *syphonToggle;
   QCheckBox *invert, *loop;
   QPushButton *record;
   QPushButton *pauseButton;
@@ -205,6 +262,14 @@ class Window : public QMainWindow {
 public:
   Window() {
     setWindowTitle("AFTERIMAGE — Frame Differencer");
+    QSettings saved("Afterimage", "Afterimage");
+    maxDelayMs = std::clamp(
+        saved.value("history/maximumDelayMs", 10000).toDouble(), 1., 600000.);
+    historyBudgetMiB =
+        std::clamp(saved.value("history/budgetMiB", 256).toInt(), 32, 4096);
+    modulation = new ModulationPanel(this);
+    modulation->setWindowFlag(Qt::Window, true);
+    modulation->resize(1100, 650);
     resize(1180, 800);
     auto root = new QWidget;
     setCentralWidget(root);
@@ -239,9 +304,14 @@ public:
     });
     pause->setCheckable(true);
     pauseButton = pause;
+    button("Settings…", [this] { showSettings(); });
     button("Clear history", [this] {
       std::lock_guard<std::mutex> l(worker.mutex);
       worker.clear = true;
+    });
+    button("Audio / sensors / mappings…", [this] {
+      modulation->show();
+      modulation->raise();
     });
     button("Output window", [this] { outputWindow.show(); });
     record = button("Record AVI…", [this] {
@@ -278,25 +348,48 @@ public:
     mode->addItems({"Absolute difference", "Signed difference",
                     "Temporal anaglyph", "Source / bypass", "Delayed tap"});
     form->addRow("Blend", mode);
+    backendSelect = new QComboBox;
+    backendSelect->addItems({"GPU (startup fallback)", "CPU reference"});
+    form->addRow("Processing", backendSelect);
+    syphonToggle = new QCheckBox("Publish Syphon: Afterimage");
+    syphonToggle->setEnabled(SyphonOutput::supported());
+    form->addRow(syphonToggle);
+    if (!SyphonOutput::supported())
+      syphonToggle->setToolTip(
+          "Syphon output is available in the macOS build.");
     delay = new QDoubleSpinBox;
-    delay->setRange(0, 10000);
+    delay->setObjectName("delayControl");
+    delay->setRange(0, maxDelayMs);
     delay->setValue(120);
     delay->setSingleStep(10);
     form->addRow("Delay", delay);
-    auto delaySlider = new QSlider(Qt::Horizontal);
-    delaySlider->setRange(0, 10000);
+    delaySlider = new QSlider(Qt::Horizontal);
+    delaySlider->setRange(0, int(maxDelayMs));
     delaySlider->setValue(120);
     form->addRow(delaySlider);
     connect(delaySlider, &QSlider::valueChanged, delay,
             &QDoubleSpinBox::setValue);
     connect(delay, &QDoubleSpinBox::valueChanged, delaySlider,
-            [delaySlider](double v) {
+            [this](double v) {
               QSignalBlocker block(delaySlider);
               delaySlider->setValue(int(v));
             });
     units = new QComboBox;
+    units->setObjectName("delayUnits");
     units->addItems({"milliseconds", "frames"});
     form->addRow("Units", units);
+    connect(units, &QComboBox::currentIndexChanged, this, [this](int now) {
+      double fps;
+      {
+        std::lock_guard<std::mutex> lock(worker.mutex);
+        fps = worker.fps;
+      }
+      const double milliseconds =
+          previousUnits == 0 ? delay->value() : delay->value() * 1000. / fps;
+      previousUnits = now;
+      updateDelayRange();
+      delay->setValue(now == 0 ? milliseconds : milliseconds * fps / 1000.);
+    });
     delayInfo = new QLabel;
     delayInfo->setWordWrap(true);
     form->addRow(delayInfo);
@@ -345,8 +438,8 @@ public:
         "IN → history tap → difference → softness → wet/dry → temporal blur → "
         "strobe\n\nTrails retain the previous output: 0 = crisp, 0.9 = long "
         "exposure. Anaglyph places current red against delayed cyan. Strobe "
-        "holds images; it does not flash to black.\n\nHistory: up to 10 "
-        "seconds / 256 MB. Early or unavailable taps use the oldest retained "
+        "holds images; it does not flash to black.\n\nHistory limits are set "
+        "in Settings. Early or unavailable taps use the oldest retained "
         "frame.");
     help->setWordWrap(true);
     help->setStyleSheet("color:#a0a8b2;padding-top:18px");
@@ -370,6 +463,9 @@ public:
     connect(&refresh, &QTimer::timeout, this, [this] {
       Params p;
       p.delayMs = delay->value();
+      p.maxDelayMs = maxDelayMs;
+      p.historyBudgetMiB = historyBudgetMiB;
+      updateDelayRange();
       QImage img;
       QString s;
       double fps, available;
@@ -386,7 +482,10 @@ public:
         p.softness = soft->value();
         p.strobe = strobe->value();
         p.invert = invert->isChecked();
+        p = modulation->apply(p);
         worker.params = p;
+        worker.preferGpu = backendSelect->currentIndex() == 0;
+        worker.syphonEnabled = syphonToggle->isChecked();
         worker.loop = loop->isChecked();
         img = worker.output;
         s = worker.status;
@@ -413,9 +512,65 @@ public:
     auto shortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(shortcut, &QShortcut::activated, pause, &QPushButton::click);
   }
-  bool hasOutput() {
+  void updateDelayRange() {
+    double fps;
+    {
+      std::lock_guard<std::mutex> lock(worker.mutex);
+      fps = worker.fps;
+    }
+    const double limit =
+        units->currentIndex() == 0 ? maxDelayMs : maxDelayMs * fps / 1000.;
+    if (std::abs(delay->maximum() - limit) > .0001) {
+      delay->setMaximum(limit);
+      delaySlider->setMaximum(int(std::ceil(limit)));
+    }
+  }
+  void setHistoryLimits(double maximumMs, int budgetMiB, bool persist = true) {
+    maxDelayMs = std::clamp(maximumMs, 1., 600000.);
+    historyBudgetMiB = std::clamp(budgetMiB, 32, 4096);
+    updateDelayRange();
+    if (persist) {
+      QSettings saved("Afterimage", "Afterimage");
+      saved.setValue("history/maximumDelayMs", maxDelayMs);
+      saved.setValue("history/budgetMiB", historyBudgetMiB);
+    }
+  }
+  void showSettings() {
+    QDialog dialog(this);
+    dialog.setWindowTitle("History settings");
+    auto form = new QFormLayout(&dialog);
+    auto maximum = new QDoubleSpinBox;
+    maximum->setObjectName("maximumDelayMs");
+    maximum->setRange(1, 600000);
+    maximum->setDecimals(0);
+    maximum->setSuffix(" ms");
+    maximum->setValue(maxDelayMs);
+    form->addRow("Maximum delay", maximum);
+    auto budget = new QSpinBox;
+    budget->setObjectName("historyBudgetMiB");
+    budget->setRange(32, 4096);
+    budget->setSuffix(" MiB");
+    budget->setValue(historyBudgetMiB);
+    form->addRow("History memory budget", budget);
+    auto note = new QLabel(
+        "Maximum delay sets the knob and mapping range (up to ten minutes). "
+        "Actual history is also limited by memory and incoming "
+        "resolution/frame rate. At 720p/30 fps, each second needs about 79 "
+        "MiB. Increasing limits fills history over time; reducing them prunes "
+        "it immediately on the next frame.");
+    note->setWordWrap(true);
+    form->addRow(note);
+    auto buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() == QDialog::Accepted)
+      setHistoryLimits(maximum->value(), budget->value());
+  }
+  bool hasOutput(bool requireGpu = false) {
     std::lock_guard<std::mutex> l(worker.mutex);
-    return !worker.output.isNull();
+    return !worker.output.isNull() && (!requireGpu || worker.gpuActive);
   }
   bool eventFilter(QObject *o, QEvent *e) override {
     if (o == outputPreview && e->type() == QEvent::MouseButtonDblClick) {
@@ -442,7 +597,9 @@ int main(int argc, char **argv) {
   Window window;
   window.show();
   if (app.arguments().contains("--smoke-test"))
-    QTimer::singleShot(1200, &app,
-                       [&] { app.exit(window.hasOutput() ? 0 : 2); });
+    QTimer::singleShot(1200, &app, [&] {
+      app.exit(window.hasOutput(app.arguments().contains("--require-gpu")) ? 0
+                                                                           : 2);
+    });
   return app.exec();
 }

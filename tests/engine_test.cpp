@@ -44,5 +44,17 @@ int main() {
   auto c = cv::Mat(4, 4, CV_8UC3, cv::Scalar(50, 50, 50));
   check(cv::countNonZero(e.process(c, 100, p).reshape(1)) == 0,
         "resolution resets history");
+  e.reset();
+  p = Params{};
+  p.maxDelayMs = 25000;
+  p.delayMs = 15000;
+  p.mode = Mode::Delayed;
+  e.process(a, 0, p);
+  out = e.process(b, 15000, p);
+  check(out.at<cv::Vec3b>(0, 0) == a.at<cv::Vec3b>(0, 0),
+        "configurable delay beyond ten seconds");
+  p.maxDelayMs = 1000;
+  e.process(b, 15100, p);
+  check(e.availableMs() <= 1000, "reduced maximum prunes history");
   std::cout << "Engine checks passed\n";
 }

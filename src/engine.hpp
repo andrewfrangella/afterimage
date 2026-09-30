@@ -7,6 +7,8 @@ struct Params {
   int softness = 0, strobe = 1;
   Mode mode = Mode::Difference;
   bool invert = false;
+  double maxDelayMs = 10000;
+  int historyBudgetMiB = 256;
 };
 class Engine {
 public:

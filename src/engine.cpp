@@ -20,12 +20,15 @@ cv::Mat Engine::process(const cv::Mat &input, double time, const Params &p) {
     reset();
   history.push_back({time, input.clone()});
   bytes += input.total() * input.elemSize();
-  while (history.size() > 1 && (bytes > 256u * 1024u * 1024u ||
-                                time - history.front().time > 10000)) {
+  const double maximum = std::clamp(p.maxDelayMs, 1., 600000.);
+  const size_t budget =
+      size_t(std::clamp(p.historyBudgetMiB, 32, 4096)) * 1024 * 1024;
+  while (history.size() > 1 &&
+         (bytes > budget || time - history.front().time > maximum)) {
     bytes -= history.front().frame.total() * history.front().frame.elemSize();
     history.pop_front();
   }
-  const double target = time - std::clamp(p.delayMs, 0., 10000.);
+  const double target = time - std::clamp(p.delayMs, 0., maximum);
   const cv::Mat *delayed = &history.front().frame;
   for (auto it = history.rbegin(); it != history.rend(); ++it)
     if (it->time <= target) {

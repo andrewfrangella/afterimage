@@ -1,0 +1,29 @@
+name: Linux GPU and modulation
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ qt6-base-dev qt6-multimedia-dev libopencv-dev libgl1-mesa-dri xvfb xauth
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel 2
+      - name: Verify effects, OSC, USB and audio envelopes
+        env:
+          QT_QPA_PLATFORMTHEME: ''
+          QT_STYLE_OVERRIDE: Fusion
+          AFTERIMAGE_REQUIRE_GPU: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a ctest --test-dir build --output-on-failure --timeout 30

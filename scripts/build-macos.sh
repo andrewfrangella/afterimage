@@ -16,9 +16,11 @@ build="${AFTERIMAGE_BUILD_DIR:-$root/build-macos}"
 stage="${AFTERIMAGE_STAGE_DIR:-$root/dist/macos-arm64}"
 qt_prefix="$(brew --prefix qt)"
 opencv_prefix="$(brew --prefix opencv)"
+"$root/scripts/build-syphon.sh"
 cmake -S "$root" -B "$build" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 \
-  -DCMAKE_PREFIX_PATH="$qt_prefix;$opencv_prefix" -DAFTERIMAGE_DEPLOY_MACOS=ON
+  -DCMAKE_PREFIX_PATH="$qt_prefix;$opencv_prefix" -DAFTERIMAGE_DEPLOY_MACOS=ON -DAFTERIMAGE_ENABLE_SYPHON=ON \
+  -DSYPHON_ROOT="$root/build-syphon/Build/Products/Release"
 cmake --build "$build" --parallel 3
 ctest --test-dir "$build" --output-on-failure --timeout 30
 cmake --install "$build" --prefix "$stage"
@@ -40,7 +42,7 @@ env -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH -u QT_PLUGIN_PATH \
   -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_FALLBACK_FRAMEWORK_PATH \
   -u DYLD_INSERT_LIBRARIES -u QT_QPA_PLATFORM_PLUGIN_PATH \
   QT_QPA_PLATFORM=cocoa QT_QPA_PLATFORMTHEME= QT_STYLE_OVERRIDE=Fusion \
-  "$app/Contents/MacOS/Afterimage" --smoke-test
+  "$app/Contents/MacOS/Afterimage" --smoke-test --require-gpu
 archive="$root/dist/Afterimage-macos-arm64.zip"
 mkdir -p "$root/dist"
 ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
