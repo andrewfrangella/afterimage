@@ -1,0 +1,9 @@
+/build/
+/.venv/
+*.avi
+.DS_Store
+
+/build-*/
+/dist/
+/__pycache__/
+*.pyc

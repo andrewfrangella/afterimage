@@ -1,0 +1,13 @@
+# Run only at install time, after the app has been staged.
+set(app "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/Afterimage.app")
+execute_process(COMMAND "@AFTERIMAGE_MACDEPLOYQT@" "${app}" -no-codesign -verbose=2
+                RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "macdeployqt failed: ${result}")
+endif()
+# Qt's deployment tool supplies the Cocoa platform plugin. BundleUtilities
+# additionally copies OpenCV, codec libraries and their transitive dependencies.
+include(BundleUtilities)
+file(GLOB_RECURSE plugins "${app}/Contents/PlugIns/*.dylib")
+fixup_bundle("${app}" "${plugins}" "@AFTERIMAGE_LIBRARY_DIRS@")
+verify_app("${app}")
