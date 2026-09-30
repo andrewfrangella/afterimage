@@ -8,7 +8,7 @@ For your M3 Max MacBook Pro, use the **Apple Silicon (arm64), macOS 26+** build.
 
 ### Download the Mac app
 
-Once this repository is uploaded, open **Actions → macOS Apple Silicon → the latest successful run → Artifacts → Afterimage-macos-arm64**. Unzip the artifact download, then unzip `Afterimage-macos-arm64.zip` to get `Afterimage.app`. Drag the app into Applications and open it. Qt, OpenCV, Syphon and codec libraries are included; Homebrew is not required to run the packaged app.
+Download `Afterimage-macos-arm64.zip` from the [0.2.0 release](https://github.com/andrewfrangella/afterimage/releases/tag/v0.2.0), unzip it, and drag `Afterimage.app` into Applications. Qt, OpenCV, Syphon and codec libraries are included; Homebrew is not required to run the packaged app. New development builds are also available under **Actions → macOS Apple Silicon → a successful run → Artifacts → Afterimage-macos-arm64**.
 
 The initial package is locally (ad-hoc) signed, not Apple-notarized. If macOS blocks it, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it. Do not disable Gatekeeper globally. On the first camera connection, allow Afterimage's camera request. You can change this later under **Privacy & Security → Camera**. Close and reopen the app after changing camera access.
 
