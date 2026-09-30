@@ -35,13 +35,7 @@ done < <(find "$app/Contents" -depth -type d -name '*.framework' -print0)
 codesign --force --sign - "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 python3 "$root/scripts/verify-macos-bundle.py" "$app"
-# Test the staged copy with no developer library/plugin path overrides.
-env -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH -u QT_PLUGIN_PATH \
-  -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_FALLBACK_FRAMEWORK_PATH \
-  -u DYLD_INSERT_LIBRARIES -u QT_QPA_PLATFORM_PLUGIN_PATH \
-  QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= QT_STYLE_OVERRIDE=Fusion \
-  "$app/Contents/MacOS/Afterimage" --smoke-test
-# Exercise the actual native platform plugin as well as the headless test path.
+# Test the deployed Cocoa plugin; offscreen tests already ran before packaging.
 env -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH -u QT_PLUGIN_PATH \
   -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_FALLBACK_FRAMEWORK_PATH \
   -u DYLD_INSERT_LIBRARIES -u QT_QPA_PLATFORM_PLUGIN_PATH \
