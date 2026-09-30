@@ -41,3 +41,7 @@ if(APPLE AND AFTERIMAGE_DEPLOY_MACOS)
   configure_file(cmake/DeployMac.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/DeployMac.cmake" @ONLY)
   install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/DeployMac.cmake")
 endif()
+
+add_test(NAME macos-plist COMMAND ${CMAKE_COMMAND}
+  -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/macos_plist_test.cmake)
