@@ -7,6 +7,16 @@ void verify(bool b, const char *m) {
   if (!b)
     throw std::runtime_error(m);
 }
+template <class Predicate>
+void waitFor(QApplication &app, Predicate predicate, const char *message) {
+  QElapsedTimer timer;
+  timer.start();
+  while (!predicate()) {
+    if (timer.elapsed() >= 10000) throw std::runtime_error(message);
+    app.processEvents();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+}
 int main(int argc, char **argv) {
   QApplication app(argc, argv);
   QTemporaryDir temporary;
@@ -34,12 +44,19 @@ int main(int argc, char **argv) {
       w.recordRequest = output;
       w.recordPending = true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    waitFor(app, [&] {
+      std::lock_guard<std::mutex> lock(w.mutex);
+      return !w.sourcePending && !w.recordPending;
+    }, "Paused source request not consumed");
     {
       std::lock_guard<std::mutex> l(w.mutex);
       w.paused = false;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    waitFor(app, [&] {
+      std::lock_guard<std::mutex> lock(w.mutex);
+      return w.status.contains("ended") || w.status.startsWith("Video error:") ||
+             w.status.startsWith("Cannot open source.");
+    }, "File did not finish within ten seconds");
     {
       std::lock_guard<std::mutex> l(w.mutex);
       verify(w.output.size() == QSize(160, 120), "file source size");
@@ -62,7 +79,10 @@ int main(int argc, char **argv) {
       w.recordRequest = temporary.path() + "/missing/output.avi";
       w.recordPending = true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    waitFor(app, [&] {
+      std::lock_guard<std::mutex> lock(w.mutex);
+      return w.status.contains("Recording failed");
+    }, "Recording error not reported within ten seconds");
     {
       std::lock_guard<std::mutex> l(w.mutex);
       verify(w.status.contains("Recording failed"),

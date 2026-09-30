@@ -596,10 +596,17 @@ int main(int argc, char **argv) {
   QApplication app(argc, argv);
   Window window;
   window.show();
-  if (app.arguments().contains("--smoke-test"))
-    QTimer::singleShot(1200, &app, [&] {
-      app.exit(window.hasOutput(app.arguments().contains("--require-gpu")) ? 0
-                                                                           : 2);
+  QTimer smokePoll;
+  QElapsedTimer smokeElapsed;
+  if (app.arguments().contains("--smoke-test")) {
+    smokeElapsed.start();
+    QObject::connect(&smokePoll, &QTimer::timeout, &app, [&] {
+      if (window.hasOutput(app.arguments().contains("--require-gpu")))
+        app.exit(0);
+      else if (smokeElapsed.elapsed() >= 10000)
+        app.exit(2);
     });
+    smokePoll.start(50);
+  }
   return app.exec();
 }

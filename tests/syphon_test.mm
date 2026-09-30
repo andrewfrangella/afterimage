@@ -77,12 +77,22 @@ int main(int argc, char **argv) {
                   image.textureSize.height == height,
               "Syphon frame dimensions differ");
       std::vector<unsigned char> pixels(width * height * 4);
-      gl.glBindTexture(GL_TEXTURE_RECTANGLE, image.textureName);
+      unsigned readFramebuffer = 0;
+      gl.glGenFramebuffers(1, &readFramebuffer);
+      gl.glBindFramebuffer(GL_FRAMEBUFFER, readFramebuffer);
+      gl.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_RECTANGLE, image.textureName, 0);
+      require(gl.glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE,
+              "Syphon client readback framebuffer incomplete");
+      gl.glReadBuffer(GL_COLOR_ATTACHMENT0);
       gl.glPixelStorei(GL_PACK_ALIGNMENT, 1);
-      gl.glGetTexImage(GL_TEXTURE_RECTANGLE, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                       pixels.data());
-      require(gl.glGetError() == GL_NO_ERROR,
-              "Syphon client texture readback failed");
+      gl.glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+      gl.glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+      gl.glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+      gl.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+      require(gl.glGetError() == GL_NO_ERROR, "Syphon client framebuffer readback failed");
+      gl.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      gl.glDeleteFramebuffers(1, &readFramebuffer);
       for (int row : {0, height / 2, height - 1}) {
         const auto offset = row * width * 4;
         std::cout << "Client row " << row << " RGBA=" << int(pixels[offset]) << ","
