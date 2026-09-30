@@ -61,6 +61,7 @@ int main(int argc, char **argv) {
       int sequence = 0;
       while (timer.elapsed() < 5000) {
         gpu.process(frame, sequence++ * 33.0, params);
+        require(gpu.makeCurrent(), "GPU context unavailable before Syphon publication");
         output.publish(gpu.outputTexture(), width, height);
         pump(app);
         if (client.hasNewFrame) {
@@ -82,6 +83,12 @@ int main(int argc, char **argv) {
                        pixels.data());
       require(gl.glGetError() == GL_NO_ERROR,
               "Syphon client texture readback failed");
+      for (int row : {0, height / 2, height - 1}) {
+        const auto offset = row * width * 4;
+        std::cout << "Client row " << row << " RGBA=" << int(pixels[offset]) << ","
+                  << int(pixels[offset + 1]) << "," << int(pixels[offset + 2]) << ","
+                  << int(pixels[offset + 3]) << std::endl;
+      }
       // OpenGL readback begins at the bottom. flipped:YES must publish an
       // upright frame: blue at the bottom, red at the top.
       for (int y = 0; y < height; ++y)

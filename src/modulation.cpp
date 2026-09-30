@@ -413,12 +413,28 @@ struct ModulationPanel::Impl {
     pcm.remove(0, frames * frameBytes);
   }
   void startAudio() {
-    auto all = QMediaDevices::audioInputs();
-    if (devices->currentIndex() < 0 || devices->currentIndex() >= all.size()) {
-      status->setText("No audio input available.");
-      return;
+    const QByteArray selectedId = devices->currentData().toByteArray();
+    QAudioDevice dev;
+    if (selectedId.isEmpty()) {
+      dev = QMediaDevices::defaultAudioInput();
+      if (dev.isNull()) {
+        status->setText("No default audio input available. Connect an audio "
+                        "device and refresh.");
+        return;
+      }
+    } else {
+      for (const auto &candidate : QMediaDevices::audioInputs()) {
+        if (candidate.id() == selectedId) {
+          dev = candidate;
+          break;
+        }
+      }
+      if (dev.isNull()) {
+        status->setText("Selected audio device disconnected. Refresh audio "
+                        "devices and choose an available input.");
+        return;
+      }
     }
-    auto dev = all[devices->currentIndex()];
     format = dev.preferredFormat();
     if (!format.isValid()) {
       status->setText("Unsupported audio format.");
@@ -479,12 +495,25 @@ ModulationPanel::ModulationPanel(QWidget *parent)
   layout->addWidget(intro);
   auto *audioRow = new QHBoxLayout;
   d->devices = new QComboBox;
-  d->devices->addItem("Default input — refresh to choose device");
+  d->devices->setObjectName("audioInput");
+  d->devices->addItem("System default input — refresh to choose device",
+                      QByteArray());
   auto *refreshAudio = new QPushButton("Refresh audio devices");
   connect(refreshAudio, &QPushButton::clicked, this, [this] {
+    const QByteArray selectedId = d->devices->currentData().toByteArray();
+    const QString selectedName = d->devices->currentText();
     d->devices->clear();
-    for (auto dev : QMediaDevices::audioInputs())
-      d->devices->addItem(dev.description());
+    d->devices->addItem("System default input", QByteArray());
+    for (const auto &dev : QMediaDevices::audioInputs())
+      d->devices->addItem(dev.description(), dev.id());
+    if (!selectedId.isEmpty()) {
+      int index = d->devices->findData(selectedId);
+      if (index < 0) {
+        d->devices->addItem(selectedName + " (disconnected)", selectedId);
+        index = d->devices->count() - 1;
+      }
+      d->devices->setCurrentIndex(index);
+    }
   });
   d->audioButton = new QPushButton("Start audio");
   audioRow->addWidget(new QLabel("Audio input"));
