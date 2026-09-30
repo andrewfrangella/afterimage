@@ -9,5 +9,5 @@ endif()
 # additionally copies OpenCV, codec libraries and their transitive dependencies.
 include(BundleUtilities)
 file(GLOB_RECURSE plugins "${app}/Contents/PlugIns/*.dylib")
-fixup_bundle("${app}" "${plugins}" "@AFTERIMAGE_LIBRARY_DIRS@")
+fixup_bundle("${app}" "${plugins}" "${app}/Contents/Frameworks;@AFTERIMAGE_LIBRARY_DIRS@")
 verify_app("${app}")
